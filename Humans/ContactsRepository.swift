@@ -98,6 +98,7 @@ class ContactsRepository {
         
         return try await Task.detached(priority: .userInitiated) { [contactStore, summaryKeysToFetch] in
             // Try to fetch with notes first
+            // Include modification date key as string (no constant available)
             let keysWithNotes: [CNKeyDescriptor] = [
                 CNContactIdentifierKey as CNKeyDescriptor,
                 CNContactGivenNameKey as CNKeyDescriptor,
@@ -106,13 +107,58 @@ class ContactsRepository {
                 CNContactPhoneNumbersKey as CNKeyDescriptor,
                 CNContactEmailAddressesKey as CNKeyDescriptor,
                 CNContactThumbnailImageDataKey as CNKeyDescriptor,
-                CNContactNoteKey as CNKeyDescriptor
+                CNContactNoteKey as CNKeyDescriptor,
+                "modificationDate" as CNKeyDescriptor
             ]
             
             do {
                 let cnContact = try contactStore.unifiedContact(withIdentifier: identifier, keysToFetch: keysWithNotes)
                 let phoneNumbers = cnContact.phoneNumbers.map { $0.value.stringValue }
                 let emailAddresses = cnContact.emailAddresses.map { $0.value as String }
+                
+                // Check if notes need normalization (missing date tag)
+                var note = cnContact.note
+                if !note.isEmpty {
+                    // Check if note has our date tag format
+                    let dateTagPattern = #"\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\]"#
+                    let hasDateTag = (try? NSRegularExpression(pattern: dateTagPattern, options: []))?
+                        .firstMatch(in: note, options: [], range: NSRange(location: 0, length: note.utf16.count)) != nil
+                    
+                    if !hasDateTag {
+                        // Normalize the note by prepending a timestamp
+                        // Try to use contact's modification date if available, otherwise use current time
+                        // Note: CNContact framework doesn't provide per-property modification dates
+                        var dateToUse = Date()
+                        
+                        // Try to access modification date using value(forKey:)
+                        // This is safe because we're using optional casting
+                        if cnContact.responds(to: Selector(("modificationDate"))) {
+                            if let modificationDate = cnContact.value(forKey: "modificationDate") as? Date {
+                                dateToUse = modificationDate
+                            }
+                        }
+                        
+                        // Format datetime in ISO 8601 UTC format (same format as new comments)
+                        let formatter = ISO8601DateFormatter()
+                        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+                        formatter.timeZone = TimeZone(secondsFromGMT: 0) // UTC
+                        let timestamp = formatter.string(from: dateToUse)
+                        
+                        // Normalize the note by prepending the timestamp
+                        let normalizedNote = "[\(timestamp)]\n\(note.trimmingCharacters(in: .whitespacesAndNewlines))"
+                        
+                        // Save the normalized note back to the contact store
+                        let mutableContact = cnContact.mutableCopy() as! CNMutableContact
+                        mutableContact.note = normalizedNote
+                        
+                        let saveRequest = CNSaveRequest()
+                        saveRequest.update(mutableContact)
+                        try contactStore.execute(saveRequest)
+                        
+                        // Use the normalized note
+                        note = normalizedNote
+                    }
+                }
                 
                 return Contact(
                     id: cnContact.identifier,
@@ -122,7 +168,7 @@ class ContactsRepository {
                     phoneNumbers: phoneNumbers,
                     emailAddresses: emailAddresses,
                     thumbnailImageData: cnContact.thumbnailImageData,
-                    note: cnContact.note
+                    note: note
                 )
             } catch let error as NSError {
                 // If it's an unauthorized keys error (code 102), fetch without notes
@@ -144,6 +190,58 @@ class ContactsRepository {
                 }
                 throw error
             }
+        }.value
+    }
+    
+    /// Checks if notes text contains our date tag format
+    private func hasDateTagFormat(_ text: String) -> Bool {
+        // Pattern for ISO 8601 date tags: [YYYY-MM-DDTHH:MM:SS(.SSS)?Z]
+        let dateTagPattern = #"\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\]"#
+        guard let regex = try? NSRegularExpression(pattern: dateTagPattern, options: []) else {
+            return false
+        }
+        let range = NSRange(location: 0, length: text.utf16.count)
+        return regex.firstMatch(in: text, options: [], range: range) != nil
+    }
+    
+    /// Update a contact's note field
+    /// Prepends new content to existing notes if append is true, otherwise replaces
+    func updateContactNote(identifier: String, newNote: String, prepend: Bool = true) async throws {
+        let status = authorizationStatus()
+        
+        guard status == .authorized else {
+            throw ContactsError.notAuthorized
+        }
+        
+        return try await Task.detached(priority: .userInitiated) { [contactStore] in
+            // Fetch the contact with notes to get current note
+            let keysToFetch: [CNKeyDescriptor] = [
+                CNContactIdentifierKey as CNKeyDescriptor,
+                CNContactNoteKey as CNKeyDescriptor
+            ]
+            
+            let cnContact = try contactStore.unifiedContact(withIdentifier: identifier, keysToFetch: keysToFetch)
+            
+            // Create mutable copy
+            let mutableContact = cnContact.mutableCopy() as! CNMutableContact
+            
+            // Update note: prepend new note if prepend is true, otherwise replace
+            if prepend {
+                let existingNote = cnContact.note
+                if existingNote.isEmpty {
+                    mutableContact.note = newNote
+                } else {
+                    mutableContact.note = "\(newNote)\n\n\(existingNote)"
+                }
+            } else {
+                mutableContact.note = newNote
+            }
+            
+            // Save the updated contact
+            let saveRequest = CNSaveRequest()
+            saveRequest.update(mutableContact)
+            
+            try contactStore.execute(saveRequest)
         }.value
     }
     
