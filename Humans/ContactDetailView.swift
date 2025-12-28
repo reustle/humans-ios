@@ -7,6 +7,7 @@
 
 import SwiftUI
 import UIKit
+import PhotosUI
 
 // MARK: - Contact Detail View
 struct ContactDetailView: View {
@@ -15,6 +16,10 @@ struct ContactDetailView: View {
     @State private var isLoadingNotes = false
     @State private var newCommentText = ""
     @State private var isSavingNote = false
+    @State private var selectedPhotoItem: PhotosPickerItem?
+    @State private var selectedImage: UIImage?
+    @State private var showCropView = false
+    @State private var isSavingImage = false
     
     private var displayContact: Contact {
         contactWithNotes ?? contact
@@ -23,146 +28,190 @@ struct ContactDetailView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                // Header with avatar (left) and name (right)
-                HStack(alignment: .center, spacing: 16) {
-                    // Avatar
-                    Group {
-                        if let imageData = displayContact.thumbnailImageData,
-                           let uiImage = UIImage(data: imageData) {
-                            Image(uiImage: uiImage)
-                                .resizable()
-                                .aspectRatio(contentMode: .fill)
-                                .frame(width: 80, height: 80)
-                                .clipShape(Circle())
-                        } else {
-                            ZStack {
-                                Circle()
-                                    .fill(Color.gray.opacity(0.3))
-                                    .frame(width: 80, height: 80)
-                                Text(displayContact.initials)
-                                    .font(.system(size: 32, weight: .medium))
-                                    .foregroundColor(.primary)
-                            }
-                        }
-                    }
-                    
-                    // Name and organization
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(displayContact.displayName)
-                            .font(.title2)
-                            .fontWeight(.semibold)
-                        
-                        if !displayContact.organizationName.isEmpty {
-                            Text(displayContact.organizationName)
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                    
-                    Spacer()
-                }
-                .padding(.horizontal)
-                .padding(.top)
-                
-                // Circle button icons row (phone and email)
-                if !displayContact.phoneNumbers.isEmpty || !displayContact.emailAddresses.isEmpty {
-                    HStack(spacing: 12) {
-                        if !displayContact.phoneNumbers.isEmpty, let firstPhone = displayContact.phoneNumbers.first {
-                            Button(action: {
-                                let cleanedPhone = firstPhone.components(separatedBy: CharacterSet.decimalDigits.inverted).joined()
-                                if let url = URL(string: "tel://\(cleanedPhone)") {
-                                    UIApplication.shared.open(url)
-                                }
-                            }) {
-                                Image(systemName: "phone.fill")
-                                    .font(.system(size: 10))
-                                    .foregroundColor(.white)
-                                    .frame(width: 25, height: 25)
-                                    .background(Color.gray)
-                                    .clipShape(Circle())
-                            }
-                        }
-                        
-                        if !displayContact.emailAddresses.isEmpty, let firstEmail = displayContact.emailAddresses.first {
-                            Button(action: {
-                                if let url = URL(string: "mailto:\(firstEmail)") {
-                                    UIApplication.shared.open(url)
-                                }
-                            }) {
-                                Image(systemName: "envelope.fill")
-                                    .font(.system(size: 10))
-                                    .foregroundColor(.white)
-                                    .frame(width: 25, height: 25)
-                                    .background(Color.gray)
-                                    .clipShape(Circle())
-                            }
-                        }
-                        
-                        Spacer()
-                    }
-                    .padding(.horizontal)
-                }
-                
-                // Notes section
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Notes")
-                        .font(.headline)
-                        .foregroundColor(.secondary)
-                    
-                    // New comment textarea
-                    VStack(alignment: .leading, spacing: 8) {
-                        ZStack(alignment: .topLeading) {
-                            TextEditor(text: $newCommentText)
-                                .frame(height: newCommentText.isEmpty ? 40 : 80)
-                                .padding(4)
-                                .font(.body)
-                            
-                            if newCommentText.isEmpty {
-                                Text("New note")
-                                    .foregroundColor(Color(white: 0.5))
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 8)
-                                    .allowsHitTesting(false)
-                            }
-                        }
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke(Color.gray.opacity(0.3), lineWidth: 1)
-                        )
-                        
-                        if !newCommentText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            Button(action: {
-                                Task {
-                                    await saveNewComment()
-                                }
-                            }) {
-                                Text("Save")
-                                    .font(.body)
-                                    .fontWeight(.medium)
-                                    .foregroundColor(.white)
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 10)
-                                    .background(Color.blue)
-                                    .cornerRadius(8)
-                            }
-                            .disabled(isSavingNote)
-                        }
-                    }
-                    
-                    // Existing notes with dividers above date tags
-                    if !displayContact.note.isEmpty {
-                        notesView(from: displayContact.note)
-                    }
-                }
-                .padding(.horizontal)
+                headerView
+                actionButtonsView
+                notesSectionView
             }
             .padding(.bottom)
         }
         .navigationTitle(displayContact.displayName)
         .navigationBarTitleDisplayMode(.inline)
         .task {
-            // Fetch contact with notes when view appears
             await loadContactWithNotes()
+        }
+        .onChange(of: selectedPhotoItem) { oldValue, newValue in
+            Task {
+                if let newValue = newValue {
+                    await loadImage(from: newValue)
+                }
+            }
+        }
+        .fullScreenCover(isPresented: $showCropView) {
+            if let selectedImage = selectedImage {
+                ImageCropView(
+                    image: selectedImage,
+                    onCrop: { croppedImage in
+                        Task {
+                            await saveContactImage(croppedImage)
+                        }
+                        showCropView = false
+                        self.selectedImage = nil
+                    },
+                    onCancel: {
+                        showCropView = false
+                        self.selectedImage = nil
+                        self.selectedPhotoItem = nil
+                    }
+                )
+            }
+        }
+    }
+    
+    private var headerView: some View {
+        HStack(alignment: .center, spacing: 16) {
+            avatarView
+            nameView
+            Spacer()
+        }
+        .padding(.horizontal)
+        .padding(.top)
+    }
+    
+    private var avatarView: some View {
+        PhotosPicker(
+            selection: $selectedPhotoItem,
+            matching: .images
+        ) {
+            Group {
+                if let imageData = displayContact.thumbnailImageData,
+                   let uiImage = UIImage(data: imageData) {
+                    Image(uiImage: uiImage)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: 80, height: 80)
+                        .clipShape(Circle())
+                } else {
+                    ZStack {
+                        Circle()
+                            .fill(Color.gray.opacity(0.3))
+                            .frame(width: 80, height: 80)
+                        Text(displayContact.initials)
+                            .font(.system(size: 32, weight: .medium))
+                            .foregroundColor(.primary)
+                    }
+                }
+            }
+        }
+    }
+    
+    private var nameView: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(displayContact.displayName)
+                .font(.title2)
+                .fontWeight(.semibold)
+            
+            if !displayContact.organizationName.isEmpty {
+                Text(displayContact.organizationName)
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+            }
+        }
+    }
+    
+    @ViewBuilder
+    private var actionButtonsView: some View {
+        if !displayContact.phoneNumbers.isEmpty || !displayContact.emailAddresses.isEmpty {
+            HStack(spacing: 12) {
+                if !displayContact.phoneNumbers.isEmpty, let firstPhone = displayContact.phoneNumbers.first {
+                    Button(action: {
+                        let cleanedPhone = firstPhone.components(separatedBy: CharacterSet.decimalDigits.inverted).joined()
+                        if let url = URL(string: "tel://\(cleanedPhone)") {
+                            UIApplication.shared.open(url)
+                        }
+                    }) {
+                        Image(systemName: "phone.fill")
+                            .font(.system(size: 10))
+                            .foregroundColor(.white)
+                            .frame(width: 25, height: 25)
+                            .background(Color.gray)
+                            .clipShape(Circle())
+                    }
+                }
+                
+                if !displayContact.emailAddresses.isEmpty, let firstEmail = displayContact.emailAddresses.first {
+                    Button(action: {
+                        if let url = URL(string: "mailto:\(firstEmail)") {
+                            UIApplication.shared.open(url)
+                        }
+                    }) {
+                        Image(systemName: "envelope.fill")
+                            .font(.system(size: 10))
+                            .foregroundColor(.white)
+                            .frame(width: 25, height: 25)
+                            .background(Color.gray)
+                            .clipShape(Circle())
+                    }
+                }
+                
+                Spacer()
+            }
+            .padding(.horizontal)
+        }
+    }
+    
+    private var notesSectionView: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Notes")
+                .font(.headline)
+                .foregroundColor(.secondary)
+            
+            newNoteView
+            
+            if !displayContact.note.isEmpty {
+                notesView(from: displayContact.note)
+            }
+        }
+        .padding(.horizontal)
+    }
+    
+    private var newNoteView: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ZStack(alignment: .topLeading) {
+                TextEditor(text: $newCommentText)
+                    .frame(height: newCommentText.isEmpty ? 40 : 80)
+                    .padding(4)
+                    .font(.body)
+                
+                if newCommentText.isEmpty {
+                    Text("New note")
+                        .foregroundColor(Color(white: 0.5))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 8)
+                        .allowsHitTesting(false)
+                }
+            }
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+            )
+            
+            if !newCommentText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Button(action: {
+                    Task {
+                        await saveNewComment()
+                    }
+                }) {
+                    Text("Save")
+                        .font(.body)
+                        .fontWeight(.medium)
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .background(Color.blue)
+                        .cornerRadius(8)
+                }
+                .disabled(isSavingNote)
+            }
         }
     }
     
@@ -572,6 +621,41 @@ struct ContactDetailView: View {
         }
         
         return segments
+    }
+    
+    /// Loads an image from a PhotosPickerItem
+    private func loadImage(from item: PhotosPickerItem) async {
+        guard let data = try? await item.loadTransferable(type: Data.self),
+              let image = UIImage(data: data) else {
+            return
+        }
+        
+        await MainActor.run {
+            self.selectedImage = image
+            self.showCropView = true
+        }
+    }
+    
+    /// Saves the cropped image to the contact
+    private func saveContactImage(_ image: UIImage) async {
+        guard let imageData = image.jpegData(compressionQuality: 0.8) else {
+            print("Error: Failed to convert image to JPEG data")
+            return
+        }
+        
+        isSavingImage = true
+        defer { isSavingImage = false }
+        
+        let repository = ContactsRepository()
+        do {
+            try await repository.updateContactImage(identifier: contact.id, imageData: imageData)
+            
+            // Reload the contact to show the updated image
+            await loadContactWithNotes()
+        } catch {
+            print("Error saving contact image: \(error)")
+            // Could show an error alert here in the future
+        }
     }
 }
 
