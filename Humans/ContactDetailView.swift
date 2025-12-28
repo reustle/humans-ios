@@ -6,91 +6,141 @@
 //
 
 import SwiftUI
+import UIKit
 
 // MARK: - Contact Detail View
 struct ContactDetailView: View {
     let contact: Contact
+    @State private var contactWithNotes: Contact?
+    @State private var isLoadingNotes = false
+    
+    private var displayContact: Contact {
+        contactWithNotes ?? contact
+    }
     
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                // Header with avatar
-                VStack(spacing: 16) {
-                    if let imageData = contact.thumbnailImageData,
-                       let uiImage = UIImage(data: imageData) {
-                        Image(uiImage: uiImage)
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .frame(width: 100, height: 100)
-                            .clipShape(Circle())
-                    } else {
-                        ZStack {
-                            Circle()
-                                .fill(Color.gray.opacity(0.3))
-                                .frame(width: 100, height: 100)
-                            Text(contact.initials)
-                                .font(.system(size: 40, weight: .medium))
-                                .foregroundColor(.primary)
+                // Header with avatar (left) and name (right)
+                HStack(alignment: .center, spacing: 16) {
+                    // Avatar
+                    Group {
+                        if let imageData = displayContact.thumbnailImageData,
+                           let uiImage = UIImage(data: imageData) {
+                            Image(uiImage: uiImage)
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                                .frame(width: 80, height: 80)
+                                .clipShape(Circle())
+                        } else {
+                            ZStack {
+                                Circle()
+                                    .fill(Color.gray.opacity(0.3))
+                                    .frame(width: 80, height: 80)
+                                Text(displayContact.initials)
+                                    .font(.system(size: 32, weight: .medium))
+                                    .foregroundColor(.primary)
+                            }
                         }
                     }
                     
-                    Text(contact.displayName)
-                        .font(.title2)
-                        .fontWeight(.semibold)
-                    
-                    if !contact.organizationName.isEmpty {
-                        Text(contact.organizationName)
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
+                    // Name and organization
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(displayContact.displayName)
+                            .font(.title2)
+                            .fontWeight(.semibold)
+                        
+                        if !displayContact.organizationName.isEmpty {
+                            Text(displayContact.organizationName)
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                        }
                     }
+                    
+                    Spacer()
                 }
-                .frame(maxWidth: .infinity)
+                .padding(.horizontal)
                 .padding(.top)
                 
-                // Phone numbers
-                if !contact.phoneNumbers.isEmpty {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Phone")
-                            .font(.headline)
-                            .foregroundColor(.secondary)
-                        
-                        ForEach(contact.phoneNumbers, id: \.self) { phone in
-                            HStack {
-                                Image(systemName: "phone")
-                                    .foregroundColor(.secondary)
-                                Text(phone)
-                                Spacer()
+                // Circle button icons row (phone and email)
+                if !displayContact.phoneNumbers.isEmpty || !displayContact.emailAddresses.isEmpty {
+                    HStack(spacing: 12) {
+                        if !displayContact.phoneNumbers.isEmpty, let firstPhone = displayContact.phoneNumbers.first {
+                            Button(action: {
+                                let cleanedPhone = firstPhone.components(separatedBy: CharacterSet.decimalDigits.inverted).joined()
+                                if let url = URL(string: "tel://\(cleanedPhone)") {
+                                    UIApplication.shared.open(url)
+                                }
+                            }) {
+                                Image(systemName: "phone.fill")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.white)
+                                    .frame(width: 25, height: 25)
+                                    .background(Color.gray)
+                                    .clipShape(Circle())
                             }
-                            .padding(.vertical, 4)
                         }
+                        
+                        if !displayContact.emailAddresses.isEmpty, let firstEmail = displayContact.emailAddresses.first {
+                            Button(action: {
+                                if let url = URL(string: "mailto:\(firstEmail)") {
+                                    UIApplication.shared.open(url)
+                                }
+                            }) {
+                                Image(systemName: "envelope.fill")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.white)
+                                    .frame(width: 25, height: 25)
+                                    .background(Color.gray)
+                                    .clipShape(Circle())
+                            }
+                        }
+                        
+                        Spacer()
                     }
                     .padding(.horizontal)
                 }
                 
-                // Email addresses
-                if !contact.emailAddresses.isEmpty {
+                // Notes section
+                if !displayContact.note.isEmpty {
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("Email")
+                        Text("Notes")
                             .font(.headline)
                             .foregroundColor(.secondary)
                         
-                        ForEach(contact.emailAddresses, id: \.self) { email in
-                            HStack {
-                                Image(systemName: "envelope")
-                                    .foregroundColor(.secondary)
-                                Text(email)
-                                Spacer()
-                            }
-                            .padding(.vertical, 4)
-                        }
+                        Text(displayContact.note)
+                            .font(.body)
+                            .foregroundColor(.primary)
                     }
                     .padding(.horizontal)
                 }
             }
             .padding(.bottom)
         }
-        .navigationTitle(contact.displayName)
+        .navigationTitle(displayContact.displayName)
         .navigationBarTitleDisplayMode(.inline)
+        .task {
+            // Fetch contact with notes when view appears
+            await loadContactWithNotes()
+        }
+    }
+    
+    private func loadContactWithNotes() async {
+        guard contactWithNotes == nil && !isLoadingNotes else { return }
+        isLoadingNotes = true
+        defer { isLoadingNotes = false }
+        
+        let repository = ContactsRepository()
+        do {
+            if let contactWithNotes = try await repository.fetchContactWithNotes(identifier: contact.id) {
+                await MainActor.run {
+                    self.contactWithNotes = contactWithNotes
+                }
+            }
+        } catch {
+            print("Error fetching contact with notes: \(error)")
+            // Silently fail - use original contact without notes
+        }
     }
 }
 

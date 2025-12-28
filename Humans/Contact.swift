@@ -16,6 +16,7 @@ struct Contact: Identifiable {
     let phoneNumbers: [String]
     let emailAddresses: [String]
     let thumbnailImageData: Data?
+    let note: String
     
     var displayName: String {
         let fullName = "\(givenName) \(familyName)".trimmingCharacters(in: .whitespaces)

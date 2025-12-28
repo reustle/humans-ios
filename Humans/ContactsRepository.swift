@@ -14,6 +14,8 @@ class ContactsRepository {
     private let contactStore = CNContactStore()
     
     /// Minimal keys for list/search display (summary-first approach)
+    /// Note: CNContactNoteKey requires special entitlement (com.apple.developer.contacts.notes)
+    /// and is not included here. Notes can be fetched separately if needed.
     private let summaryKeysToFetch: [CNKeyDescriptor] = [
         CNContactIdentifierKey as CNKeyDescriptor,
         CNContactGivenNameKey as CNKeyDescriptor,
@@ -75,12 +77,73 @@ class ContactsRepository {
                     organizationName: cnContact.organizationName,
                     phoneNumbers: phoneNumbers,
                     emailAddresses: emailAddresses,
-                    thumbnailImageData: cnContact.thumbnailImageData
+                    thumbnailImageData: cnContact.thumbnailImageData,
+                    note: "" // Note field requires special entitlement, left empty for now
                 )
                 contacts.append(contact)
             }
             
             return contacts
+        }.value
+    }
+    
+    /// Fetch a single contact by identifier with all keys including notes
+    /// Falls back to fetching without notes if notes entitlement is unavailable
+    func fetchContactWithNotes(identifier: String) async throws -> Contact? {
+        let status = authorizationStatus()
+        
+        guard status == .authorized else {
+            throw ContactsError.notAuthorized
+        }
+        
+        return try await Task.detached(priority: .userInitiated) { [contactStore, summaryKeysToFetch] in
+            // Try to fetch with notes first
+            let keysWithNotes: [CNKeyDescriptor] = [
+                CNContactIdentifierKey as CNKeyDescriptor,
+                CNContactGivenNameKey as CNKeyDescriptor,
+                CNContactFamilyNameKey as CNKeyDescriptor,
+                CNContactOrganizationNameKey as CNKeyDescriptor,
+                CNContactPhoneNumbersKey as CNKeyDescriptor,
+                CNContactEmailAddressesKey as CNKeyDescriptor,
+                CNContactThumbnailImageDataKey as CNKeyDescriptor,
+                CNContactNoteKey as CNKeyDescriptor
+            ]
+            
+            do {
+                let cnContact = try contactStore.unifiedContact(withIdentifier: identifier, keysToFetch: keysWithNotes)
+                let phoneNumbers = cnContact.phoneNumbers.map { $0.value.stringValue }
+                let emailAddresses = cnContact.emailAddresses.map { $0.value as String }
+                
+                return Contact(
+                    id: cnContact.identifier,
+                    givenName: cnContact.givenName,
+                    familyName: cnContact.familyName,
+                    organizationName: cnContact.organizationName,
+                    phoneNumbers: phoneNumbers,
+                    emailAddresses: emailAddresses,
+                    thumbnailImageData: cnContact.thumbnailImageData,
+                    note: cnContact.note
+                )
+            } catch let error as NSError {
+                // If it's an unauthorized keys error (code 102), fetch without notes
+                if error.domain == CNError.errorDomain && error.code == 102 {
+                    let cnContact = try contactStore.unifiedContact(withIdentifier: identifier, keysToFetch: summaryKeysToFetch)
+                    let phoneNumbers = cnContact.phoneNumbers.map { $0.value.stringValue }
+                    let emailAddresses = cnContact.emailAddresses.map { $0.value as String }
+                    
+                    return Contact(
+                        id: cnContact.identifier,
+                        givenName: cnContact.givenName,
+                        familyName: cnContact.familyName,
+                        organizationName: cnContact.organizationName,
+                        phoneNumbers: phoneNumbers,
+                        emailAddresses: emailAddresses,
+                        thumbnailImageData: cnContact.thumbnailImageData,
+                        note: ""
+                    )
+                }
+                throw error
+            }
         }.value
     }
     
