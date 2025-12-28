@@ -23,7 +23,8 @@ class ContactsRepository {
         CNContactOrganizationNameKey as CNKeyDescriptor,
         CNContactPhoneNumbersKey as CNKeyDescriptor,
         CNContactEmailAddressesKey as CNKeyDescriptor,
-        CNContactThumbnailImageDataKey as CNKeyDescriptor
+        CNContactThumbnailImageDataKey as CNKeyDescriptor,
+        "modificationDate" as CNKeyDescriptor
     ]
     
     /// Check current authorization status (static method, doesn't need actor isolation)
@@ -62,13 +63,19 @@ class ContactsRepository {
         // CNContactStore is thread-safe per Apple documentation
         return try await Task.detached(priority: .userInitiated) { [contactStore, summaryKeysToFetch] in
             let request = CNContactFetchRequest(keysToFetch: summaryKeysToFetch)
-            request.sortOrder = .givenName
+            // Sort order will be applied in ViewModel by modification date
             
             var contacts: [Contact] = []
             
             try contactStore.enumerateContacts(with: request) { cnContact, _ in
                 let phoneNumbers = cnContact.phoneNumbers.map { $0.value.stringValue }
                 let emailAddresses = cnContact.emailAddresses.map { $0.value as String }
+                
+                // Extract modification date if available
+                var modificationDate: Date? = nil
+                if cnContact.responds(to: Selector(("modificationDate"))) {
+                    modificationDate = cnContact.value(forKey: "modificationDate") as? Date
+                }
                 
                 let contact = Contact(
                     id: cnContact.identifier,
@@ -78,7 +85,8 @@ class ContactsRepository {
                     phoneNumbers: phoneNumbers,
                     emailAddresses: emailAddresses,
                     thumbnailImageData: cnContact.thumbnailImageData,
-                    note: "" // Note field requires special entitlement, left empty for now
+                    note: "", // Note field requires special entitlement, left empty for now
+                    modificationDate: modificationDate
                 )
                 contacts.append(contact)
             }
@@ -160,6 +168,12 @@ class ContactsRepository {
                     }
                 }
                 
+                // Extract modification date if available
+                var modificationDate: Date? = nil
+                if cnContact.responds(to: Selector(("modificationDate"))) {
+                    modificationDate = cnContact.value(forKey: "modificationDate") as? Date
+                }
+                
                 return Contact(
                     id: cnContact.identifier,
                     givenName: cnContact.givenName,
@@ -168,7 +182,8 @@ class ContactsRepository {
                     phoneNumbers: phoneNumbers,
                     emailAddresses: emailAddresses,
                     thumbnailImageData: cnContact.thumbnailImageData,
-                    note: note
+                    note: note,
+                    modificationDate: modificationDate
                 )
             } catch let error as NSError {
                 // If it's an unauthorized keys error (code 102), fetch without notes
@@ -176,6 +191,12 @@ class ContactsRepository {
                     let cnContact = try contactStore.unifiedContact(withIdentifier: identifier, keysToFetch: summaryKeysToFetch)
                     let phoneNumbers = cnContact.phoneNumbers.map { $0.value.stringValue }
                     let emailAddresses = cnContact.emailAddresses.map { $0.value as String }
+                    
+                    // Extract modification date if available
+                    var modificationDate: Date? = nil
+                    if cnContact.responds(to: Selector(("modificationDate"))) {
+                        modificationDate = cnContact.value(forKey: "modificationDate") as? Date
+                    }
                     
                     return Contact(
                         id: cnContact.identifier,
@@ -185,7 +206,8 @@ class ContactsRepository {
                         phoneNumbers: phoneNumbers,
                         emailAddresses: emailAddresses,
                         thumbnailImageData: cnContact.thumbnailImageData,
-                        note: ""
+                        note: "",
+                        modificationDate: modificationDate
                     )
                 }
                 throw error

@@ -17,6 +17,7 @@ struct Contact: Identifiable {
     let emailAddresses: [String]
     let thumbnailImageData: Data?
     let note: String
+    let modificationDate: Date?
     
     var displayName: String {
         let fullName = "\(givenName) \(familyName)".trimmingCharacters(in: .whitespaces)
@@ -54,6 +55,31 @@ struct Contact: Identifiable {
             return firstEmail
         }
         return nil
+    }
+    
+    /// Formats modification date to "time ago" format (e.g., "2d ago", "4hr ago", "5m ago")
+    var timeAgoString: String? {
+        guard let modificationDate = modificationDate else {
+            return nil
+        }
+        
+        let now = Date()
+        let timeInterval = now.timeIntervalSince(modificationDate)
+        
+        let seconds = Int(timeInterval)
+        let minutes = seconds / 60
+        let hours = minutes / 60
+        let days = hours / 24
+        
+        if days > 0 {
+            return "\(days)d ago"
+        } else if hours > 0 {
+            return "\(hours)hr ago"
+        } else if minutes > 0 {
+            return "\(minutes)m ago"
+        } else {
+            return "just now"
+        }
     }
 }
 

@@ -89,7 +89,16 @@ class ContactsViewModel: ObservableObject {
         do {
             let fetchedContacts = try await repository.fetchAllContacts()
             print("📱 Fetched \(fetchedContacts.count) contacts")
-            contacts = fetchedContacts
+            // Sort by modification date (most recent first), then by name for contacts without dates
+            contacts = fetchedContacts.sorted { contact1, contact2 in
+                let date1 = contact1.modificationDate ?? Date.distantPast
+                let date2 = contact2.modificationDate ?? Date.distantPast
+                if date1 != date2 {
+                    return date1 > date2
+                }
+                // If dates are equal (or both nil), sort by name
+                return contact1.displayName < contact2.displayName
+            }
         } catch {
             print("📱 Error fetching contacts: \(error)")
             errorMessage = error.localizedDescription

@@ -133,13 +133,13 @@ struct ContactRowView: View {
             .frame(width: 40, height: 40)
             .clipShape(Circle())
             
-            // Name and subtitle
+            // Name and time ago
             VStack(alignment: .leading, spacing: 4) {
                 Text(contact.displayName)
                     .font(.body)
                 
-                if let subtitle = contact.subtitle {
-                    Text(subtitle)
+                if let timeAgo = contact.timeAgoString {
+                    Text(timeAgo)
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
