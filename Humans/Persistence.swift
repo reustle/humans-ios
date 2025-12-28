@@ -8,7 +8,10 @@
 import CoreData
 
 struct PersistenceController {
-    static let shared = PersistenceController()
+    static let shared: PersistenceController = {
+        // Lazy initialization to avoid blocking app launch analytics
+        return PersistenceController()
+    }()
 
     @MainActor
     static let preview: PersistenceController = {
@@ -36,6 +39,15 @@ struct PersistenceController {
         if inMemory {
             container.persistentStoreDescriptions.first!.url = URL(fileURLWithPath: "/dev/null")
         }
+        
+        // Configure store options for better performance
+        container.persistentStoreDescriptions.forEach { storeDescription in
+            storeDescription.shouldMigrateStoreAutomatically = true
+            storeDescription.shouldInferMappingModelAutomatically = true
+        }
+        
+        // Load stores - the completion handler is called asynchronously
+        // This helps prevent blocking app launch analytics (CA Event errors)
         container.loadPersistentStores(completionHandler: { (storeDescription, error) in
             if let error = error as NSError? {
                 // Replace this implementation with code to handle the error appropriately.

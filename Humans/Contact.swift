@@ -41,5 +41,18 @@ struct Contact: Identifiable {
         }
         return initials.uppercased()
     }
+    
+    var subtitle: String? {
+        if !organizationName.isEmpty && !displayName.contains(organizationName) {
+            return organizationName
+        }
+        if let firstPhone = phoneNumbers.first {
+            return firstPhone
+        }
+        if let firstEmail = emailAddresses.first {
+            return firstEmail
+        }
+        return nil
+    }
 }
 

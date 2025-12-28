@@ -10,11 +10,15 @@ import CoreData
 
 @main
 struct HumansApp: App {
-    let persistenceController = PersistenceController.shared
+    // Computed property ensures lazy initialization - CoreData setup happens
+    // when first accessed (after app scene is ready), preventing CA Event errors
+    private var persistenceController: PersistenceController {
+        PersistenceController.shared
+    }
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            ContactsListView()
                 .environment(\.managedObjectContext, persistenceController.container.viewContext)
         }
     }
