@@ -14,9 +14,21 @@ class ContactsRepository {
     private let contactStore = CNContactStore()
     
     /// Minimal keys for list/search display (summary-first approach)
-    /// Note: CNContactNoteKey requires special entitlement (com.apple.developer.contacts.notes)
-    /// and is not included here. Notes can be fetched separately if needed.
+    /// Includes notes if entitlement is available
     private let summaryKeysToFetch: [CNKeyDescriptor] = [
+        CNContactIdentifierKey as CNKeyDescriptor,
+        CNContactGivenNameKey as CNKeyDescriptor,
+        CNContactFamilyNameKey as CNKeyDescriptor,
+        CNContactOrganizationNameKey as CNKeyDescriptor,
+        CNContactPhoneNumbersKey as CNKeyDescriptor,
+        CNContactEmailAddressesKey as CNKeyDescriptor,
+        CNContactThumbnailImageDataKey as CNKeyDescriptor,
+        CNContactNoteKey as CNKeyDescriptor,
+        "modificationDate" as CNKeyDescriptor
+    ]
+    
+    /// Keys without notes (fallback if notes entitlement is unavailable)
+    private let summaryKeysWithoutNotes: [CNKeyDescriptor] = [
         CNContactIdentifierKey as CNKeyDescriptor,
         CNContactGivenNameKey as CNKeyDescriptor,
         CNContactFamilyNameKey as CNKeyDescriptor,
@@ -52,6 +64,7 @@ class ContactsRepository {
     
     /// Fetch all contacts using minimal keys for performance
     /// CNContactStore is thread-safe, so we can enumerate in background
+    /// Tries to fetch with notes first, falls back to without notes if entitlement unavailable
     func fetchAllContacts() async throws -> [Contact] {
         let status = authorizationStatus()
         
@@ -61,34 +74,72 @@ class ContactsRepository {
         
         // Run enumeration in a background task to avoid blocking UI
         // CNContactStore is thread-safe per Apple documentation
-        return try await Task.detached(priority: .userInitiated) { [contactStore, summaryKeysToFetch] in
-            let request = CNContactFetchRequest(keysToFetch: summaryKeysToFetch)
-            // Sort order will be applied in ViewModel by modification date
-            
+        return try await Task.detached(priority: .userInitiated) { [contactStore, summaryKeysToFetch, summaryKeysWithoutNotes] in
             var contacts: [Contact] = []
             
-            try contactStore.enumerateContacts(with: request) { cnContact, _ in
-                let phoneNumbers = cnContact.phoneNumbers.map { $0.value.stringValue }
-                let emailAddresses = cnContact.emailAddresses.map { $0.value as String }
-                
-                // Extract modification date if available
-                var modificationDate: Date? = nil
-                if cnContact.responds(to: Selector(("modificationDate"))) {
-                    modificationDate = cnContact.value(forKey: "modificationDate") as? Date
+            // Try to fetch with notes first
+            do {
+                let request = CNContactFetchRequest(keysToFetch: summaryKeysToFetch)
+                try contactStore.enumerateContacts(with: request) { cnContact, _ in
+                    let phoneNumbers = cnContact.phoneNumbers.map { $0.value.stringValue }
+                    let emailAddresses = cnContact.emailAddresses.map { $0.value as String }
+                    
+                    // Extract modification date if available
+                    var modificationDate: Date? = nil
+                    if cnContact.responds(to: Selector(("modificationDate"))) {
+                        modificationDate = cnContact.value(forKey: "modificationDate") as? Date
+                    }
+                    
+                    // Get note (will be empty string if not available)
+                    let note = cnContact.note
+                    
+                    let contact = Contact(
+                        id: cnContact.identifier,
+                        givenName: cnContact.givenName,
+                        familyName: cnContact.familyName,
+                        organizationName: cnContact.organizationName,
+                        phoneNumbers: phoneNumbers,
+                        emailAddresses: emailAddresses,
+                        thumbnailImageData: cnContact.thumbnailImageData,
+                        note: note,
+                        modificationDate: modificationDate
+                    )
+                    contacts.append(contact)
                 }
-                
-                let contact = Contact(
-                    id: cnContact.identifier,
-                    givenName: cnContact.givenName,
-                    familyName: cnContact.familyName,
-                    organizationName: cnContact.organizationName,
-                    phoneNumbers: phoneNumbers,
-                    emailAddresses: emailAddresses,
-                    thumbnailImageData: cnContact.thumbnailImageData,
-                    note: "", // Note field requires special entitlement, left empty for now
-                    modificationDate: modificationDate
-                )
-                contacts.append(contact)
+            } catch let error as NSError {
+                // If it's an unauthorized keys error (code 102), fall back to fetching without notes
+                if error.domain == CNError.errorDomain && error.code == 102 {
+                    print("📱 Notes entitlement unavailable, fetching without notes")
+                    
+                    // Retry without notes
+                    let request = CNContactFetchRequest(keysToFetch: summaryKeysWithoutNotes)
+                    try contactStore.enumerateContacts(with: request) { cnContact, _ in
+                        let phoneNumbers = cnContact.phoneNumbers.map { $0.value.stringValue }
+                        let emailAddresses = cnContact.emailAddresses.map { $0.value as String }
+                        
+                        // Extract modification date if available
+                        var modificationDate: Date? = nil
+                        if cnContact.responds(to: Selector(("modificationDate"))) {
+                            modificationDate = cnContact.value(forKey: "modificationDate") as? Date
+                        }
+                        
+                        let contact = Contact(
+                            id: cnContact.identifier,
+                            givenName: cnContact.givenName,
+                            familyName: cnContact.familyName,
+                            organizationName: cnContact.organizationName,
+                            phoneNumbers: phoneNumbers,
+                            emailAddresses: emailAddresses,
+                            thumbnailImageData: cnContact.thumbnailImageData,
+                            note: "", // Notes not available
+                            modificationDate: modificationDate
+                        )
+                        contacts.append(contact)
+                    }
+                } else {
+                    // Re-throw other errors
+                    throw error
+                }
             }
             
             return contacts
@@ -104,23 +155,10 @@ class ContactsRepository {
             throw ContactsError.notAuthorized
         }
         
-        return try await Task.detached(priority: .userInitiated) { [contactStore, summaryKeysToFetch] in
+        return try await Task.detached(priority: .userInitiated) { [contactStore, summaryKeysToFetch, summaryKeysWithoutNotes] in
             // Try to fetch with notes first
-            // Include modification date key as string (no constant available)
-            let keysWithNotes: [CNKeyDescriptor] = [
-                CNContactIdentifierKey as CNKeyDescriptor,
-                CNContactGivenNameKey as CNKeyDescriptor,
-                CNContactFamilyNameKey as CNKeyDescriptor,
-                CNContactOrganizationNameKey as CNKeyDescriptor,
-                CNContactPhoneNumbersKey as CNKeyDescriptor,
-                CNContactEmailAddressesKey as CNKeyDescriptor,
-                CNContactThumbnailImageDataKey as CNKeyDescriptor,
-                CNContactNoteKey as CNKeyDescriptor,
-                "modificationDate" as CNKeyDescriptor
-            ]
-            
             do {
-                let cnContact = try contactStore.unifiedContact(withIdentifier: identifier, keysToFetch: keysWithNotes)
+                let cnContact = try contactStore.unifiedContact(withIdentifier: identifier, keysToFetch: summaryKeysToFetch)
                 let phoneNumbers = cnContact.phoneNumbers.map { $0.value.stringValue }
                 let emailAddresses = cnContact.emailAddresses.map { $0.value as String }
                 
@@ -188,7 +226,7 @@ class ContactsRepository {
             } catch let error as NSError {
                 // If it's an unauthorized keys error (code 102), fetch without notes
                 if error.domain == CNError.errorDomain && error.code == 102 {
-                    let cnContact = try contactStore.unifiedContact(withIdentifier: identifier, keysToFetch: summaryKeysToFetch)
+                    let cnContact = try contactStore.unifiedContact(withIdentifier: identifier, keysToFetch: summaryKeysWithoutNotes)
                     let phoneNumbers = cnContact.phoneNumbers.map { $0.value.stringValue }
                     let emailAddresses = cnContact.emailAddresses.map { $0.value as String }
                     

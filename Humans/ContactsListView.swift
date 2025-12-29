@@ -11,6 +11,81 @@ import Contacts
 struct ContactsListView: View {
     @StateObject private var viewModel = ContactsViewModel()
     @State private var searchText = ""
+    
+    /// Filtered contacts based on search text
+    /// - Name matches are prioritized over notes matches
+    /// - If search contains spaces, all terms must match
+    private var filteredContacts: [Contact] {
+        guard !searchText.trimmingCharacters(in: .whitespaces).isEmpty else {
+            return viewModel.contacts
+        }
+        
+        // Split search text into terms (by spaces)
+        let searchTerms = searchText
+            .trimmingCharacters(in: .whitespaces)
+            .components(separatedBy: .whitespaces)
+            .filter { !$0.isEmpty }
+            .map { $0.lowercased() }
+        
+        guard !searchTerms.isEmpty else {
+            return viewModel.contacts
+        }
+        
+        // Filter contacts where all terms match
+        // Each term must match in either the name OR notes (or both)
+        // Example: "Emily John" matches "John Smith" if:
+        //   - "Emily" is in notes AND "John" is in name, OR
+        //   - Both terms are in name, OR
+        //   - Both terms are in notes, OR
+        //   - Any combination where each term appears somewhere
+        let matchingContacts = viewModel.contacts.filter { contact in
+            let nameLower = contact.displayName.lowercased()
+            let noteLower = contact.note.lowercased()
+            
+            // For each search term, check if it appears in name OR notes
+            // All terms must match somewhere (not necessarily all in the same field)
+            let allTermsMatch = searchTerms.allSatisfy { term in
+                let matchesName = nameLower.contains(term)
+                let matchesNote = noteLower.contains(term)
+                return matchesName || matchesNote
+            }
+            
+            return allTermsMatch
+        }
+        
+        // Sort: name matches first, then notes matches
+        return matchingContacts.sorted { contact1, contact2 in
+            let name1Lower = contact1.displayName.lowercased()
+            let name2Lower = contact2.displayName.lowercased()
+            
+            // Check if contact1 matches by name
+            let contact1NameMatch = searchTerms.allSatisfy { term in
+                name1Lower.contains(term)
+            }
+            
+            // Check if contact2 matches by name
+            let contact2NameMatch = searchTerms.allSatisfy { term in
+                name2Lower.contains(term)
+            }
+            
+            // If one matches by name and the other doesn't, prioritize name match
+            if contact1NameMatch && !contact2NameMatch {
+                return true
+            }
+            if !contact1NameMatch && contact2NameMatch {
+                return false
+            }
+            
+            // If both match by name or both don't, maintain original sort order
+            // (by modification date, then by name)
+            let date1 = contact1.modificationDate ?? Date.distantPast
+            let date2 = contact2.modificationDate ?? Date.distantPast
+            if date1 != date2 {
+                return date1 > date2
+            }
+            return contact1.displayName < contact2.displayName
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -50,12 +125,21 @@ struct ContactsListView: View {
                             Image(systemName: "person.3")
                                 .font(.system(size: 48))
                                 .foregroundColor(.gray)
-                            Text("No contacts found")
+                            Text("No humans found")
+                                .foregroundColor(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else if filteredContacts.isEmpty {
+                        VStack(spacing: 20) {
+                            Image(systemName: "magnifyingglass")
+                                .font(.system(size: 48))
+                                .foregroundColor(.gray)
+                            Text("No humans match your search")
                                 .foregroundColor(.secondary)
                         }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else {
-                        List(viewModel.contacts) { contact in
+                        List(filteredContacts) { contact in
                             VStack(spacing: 0) {
                                 NavigationLink {
                                     ContactDetailView(contact: contact)
@@ -80,6 +164,24 @@ struct ContactsListView: View {
                         .foregroundColor(.secondary)
                     TextField("Search", text: $searchText)
                         .textFieldStyle(.plain)
+                        .onKeyPress(.escape) {
+                            if !searchText.isEmpty {
+                                searchText = ""
+                                return .handled
+                            }
+                            return .ignored
+                        }
+                        .overlay(alignment: .trailing) {
+                            if !searchText.isEmpty {
+                                Button {
+                                    searchText = ""
+                                } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .foregroundColor(.secondary)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)

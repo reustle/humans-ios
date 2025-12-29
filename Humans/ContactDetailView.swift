@@ -17,9 +17,9 @@ struct ContactDetailView: View {
     @State private var newCommentText = ""
     @State private var isSavingNote = false
     @State private var selectedPhotoItem: PhotosPickerItem?
-    @State private var selectedImage: UIImage?
-    @State private var showCropView = false
     @State private var isSavingImage = false
+    @State private var showPhotoPicker = false
+    @State private var editingNoteTimestamp: String? = nil // Timestamp of the note being edited
     
     private var displayContact: Contact {
         contactWithNotes ?? contact
@@ -42,27 +42,8 @@ struct ContactDetailView: View {
         .onChange(of: selectedPhotoItem) { oldValue, newValue in
             Task {
                 if let newValue = newValue {
-                    await loadImage(from: newValue)
+                    await loadAndSaveImage(from: newValue)
                 }
-            }
-        }
-        .fullScreenCover(isPresented: $showCropView) {
-            if let selectedImage = selectedImage {
-                ImageCropView(
-                    image: selectedImage,
-                    onCrop: { croppedImage in
-                        Task {
-                            await saveContactImage(croppedImage)
-                        }
-                        showCropView = false
-                        self.selectedImage = nil
-                    },
-                    onCancel: {
-                        showCropView = false
-                        self.selectedImage = nil
-                        self.selectedPhotoItem = nil
-                    }
-                )
             }
         }
     }
@@ -78,10 +59,9 @@ struct ContactDetailView: View {
     }
     
     private var avatarView: some View {
-        PhotosPicker(
-            selection: $selectedPhotoItem,
-            matching: .images
-        ) {
+        Button(action: {
+            showPhotoPicker = true
+        }) {
             Group {
                 if let imageData = displayContact.thumbnailImageData,
                    let uiImage = UIImage(data: imageData) {
@@ -102,6 +82,12 @@ struct ContactDetailView: View {
                 }
             }
         }
+        .buttonStyle(PlainButtonStyle())
+        .photosPicker(
+            isPresented: $showPhotoPicker,
+            selection: $selectedPhotoItem,
+            matching: .images
+        )
     }
     
     private var nameView: some View {
@@ -176,41 +162,47 @@ struct ContactDetailView: View {
     
     private var newNoteView: some View {
         VStack(alignment: .leading, spacing: 8) {
-            ZStack(alignment: .topLeading) {
-                TextEditor(text: $newCommentText)
-                    .frame(height: newCommentText.isEmpty ? 40 : 80)
-                    .padding(4)
-                    .font(.body)
-                
-                if newCommentText.isEmpty {
-                    Text("New note")
-                        .foregroundColor(Color(white: 0.5))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 8)
-                        .allowsHitTesting(false)
-                }
-            }
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(Color.gray.opacity(0.3), lineWidth: 1)
-            )
+            TextField(editingNoteTimestamp != nil ? "Edit note" : "New note", text: $newCommentText, axis: .vertical)
+                .lineLimit(3...10)
+                .padding(12)
+                .font(.body)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+                )
             
             if !newCommentText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                Button(action: {
-                    Task {
-                        await saveNewComment()
+                HStack(spacing: 12) {
+                    Button(action: {
+                        cancelEditing()
+                    }) {
+                        Text("Cancel")
+                            .font(.body)
+                            .fontWeight(.medium)
+                            .foregroundColor(.primary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(Color.gray.opacity(0.2))
+                            .cornerRadius(8)
                     }
-                }) {
-                    Text("Save")
-                        .font(.body)
-                        .fontWeight(.medium)
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 10)
-                        .background(Color.blue)
-                        .cornerRadius(8)
+                    .disabled(isSavingNote)
+                    
+                    Button(action: {
+                        Task {
+                            await saveNewComment()
+                        }
+                    }) {
+                        Text("Save")
+                            .font(.body)
+                            .fontWeight(.medium)
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(Color.blue)
+                            .cornerRadius(8)
+                    }
+                    .disabled(isSavingNote)
                 }
-                .disabled(isSavingNote)
             }
         }
     }
@@ -240,21 +232,26 @@ struct ContactDetailView: View {
         isSavingNote = true
         defer { isSavingNote = false }
         
-        // Format datetime in ISO 8601 UTC format
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        formatter.timeZone = TimeZone(secondsFromGMT: 0) // UTC
-        let timestamp = formatter.string(from: Date())
-        let prefixedComment = "[\(timestamp)]\n\(trimmedText)"
-        
         let repository = ContactsRepository()
         do {
-            try await repository.updateContactNote(identifier: contact.id, newNote: prefixedComment, prepend: true)
-            
-            // Clear the text field
-            await MainActor.run {
-                newCommentText = ""
+            if let editingTimestamp = editingNoteTimestamp {
+                // Editing an existing note - update only that segment
+                try await updateNoteSegment(timestamp: editingTimestamp, newContent: trimmedText)
+            } else {
+                // Creating a new note
+                // Format datetime in ISO 8601 UTC format
+                let formatter = ISO8601DateFormatter()
+                formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+                formatter.timeZone = TimeZone(secondsFromGMT: 0) // UTC
+                let timestamp = formatter.string(from: Date())
+                let prefixedComment = "[\(timestamp)]\n\(trimmedText)"
+                
+                try await repository.updateContactNote(identifier: contact.id, newNote: prefixedComment, prepend: true)
             }
+            
+            // Clear the text field and editing state immediately after successful save
+            newCommentText = ""
+            editingNoteTimestamp = nil
             
             // Reload the contact to show the updated notes
             await loadContactWithNotes()
@@ -262,6 +259,59 @@ struct ContactDetailView: View {
             print("Error saving note: \(error)")
             // Could show an error alert here in the future
         }
+    }
+    
+    /// Updates a specific note segment by replacing only that segment's content
+    private func updateNoteSegment(timestamp: String, newContent: String) async throws {
+        let repository = ContactsRepository()
+        
+        // Fetch current notes
+        guard let currentContact = try await repository.fetchContactWithNotes(identifier: contact.id) else {
+            throw NSError(domain: "ContactDetailView", code: 1, userInfo: [NSLocalizedDescriptionKey: "Contact not found"])
+        }
+        
+        let currentNotes = currentContact.note
+        let segments = parseNotesSegments(from: currentNotes)
+        
+        // Find the segment with matching timestamp and update it
+        var updatedSegments: [NoteSegment] = []
+        var found = false
+        
+        for segment in segments {
+            if segment.timestamp == timestamp {
+                // Replace this segment's content
+                updatedSegments.append(NoteSegment(timestamp: timestamp, content: newContent))
+                found = true
+            } else {
+                updatedSegments.append(segment)
+            }
+        }
+        
+        guard found else {
+            throw NSError(domain: "ContactDetailView", code: 2, userInfo: [NSLocalizedDescriptionKey: "Note segment not found"])
+        }
+        
+        // Reconstruct the notes string
+        var updatedNotes = ""
+        for (index, segment) in updatedSegments.enumerated() {
+            if index > 0 {
+                updatedNotes += "\n\n"
+            }
+            if let ts = segment.timestamp {
+                updatedNotes += "\(ts)\n\(segment.content)"
+            } else {
+                updatedNotes += segment.content
+            }
+        }
+        
+        // Save the updated notes (replace entire notes field)
+        try await repository.updateContactNote(identifier: contact.id, newNote: updatedNotes, prepend: false)
+    }
+    
+    /// Cancels editing and clears the text field
+    private func cancelEditing() {
+        newCommentText = ""
+        editingNoteTimestamp = nil
     }
     
     /// Structure to hold a note segment with its timestamp
@@ -297,6 +347,13 @@ struct ContactDetailView: View {
                         Text(attributedString(from: segment.content))
                             .font(.body)
                             .foregroundColor(.primary)
+                            .onTapGesture(count: 2) {
+                                // Double tap to edit
+                                if let timestamp = segment.timestamp {
+                                    editingNoteTimestamp = timestamp
+                                    newCommentText = segment.content
+                                }
+                            }
                     }
                 }
             }
@@ -623,39 +680,56 @@ struct ContactDetailView: View {
         return segments
     }
     
-    /// Loads an image from a PhotosPickerItem
-    private func loadImage(from item: PhotosPickerItem) async {
-        guard let data = try? await item.loadTransferable(type: Data.self),
-              let image = UIImage(data: data) else {
-            return
-        }
-        
-        await MainActor.run {
-            self.selectedImage = image
-            self.showCropView = true
-        }
-    }
-    
-    /// Saves the cropped image to the contact
-    private func saveContactImage(_ image: UIImage) async {
-        guard let imageData = image.jpegData(compressionQuality: 0.8) else {
-            print("Error: Failed to convert image to JPEG data")
-            return
-        }
+    /// Loads an image from a PhotosPickerItem, crops it to center square, and saves it
+    private func loadAndSaveImage(from item: PhotosPickerItem) async {
+        guard !isSavingImage else { return }
         
         isSavingImage = true
         defer { isSavingImage = false }
         
-        let repository = ContactsRepository()
         do {
+            // Load image data
+            guard let data = try await item.loadTransferable(type: Data.self),
+                  let image = UIImage(data: data) else {
+                return
+            }
+            
+            // Crop to center square
+            let croppedImage = image.croppedToCenterSquare()
+            
+            // Convert to JPEG
+            guard let imageData = croppedImage.jpegData(compressionQuality: 0.8) else {
+                return
+            }
+            
+            // Save to contact
+            let repository = ContactsRepository()
             try await repository.updateContactImage(identifier: contact.id, imageData: imageData)
             
             // Reload the contact to show the updated image
             await loadContactWithNotes()
         } catch {
-            print("Error saving contact image: \(error)")
-            // Could show an error alert here in the future
+            print("Error loading/saving contact image: \(error)")
         }
+    }
+}
+
+// MARK: - UIImage Extension
+extension UIImage {
+    /// Crops the image to a square from the center
+    func croppedToCenterSquare() -> UIImage {
+        let imageSize = size
+        let squareSize = min(imageSize.width, imageSize.height)
+        let x = (imageSize.width - squareSize) / 2
+        let y = (imageSize.height - squareSize) / 2
+        let cropRect = CGRect(x: x, y: y, width: squareSize, height: squareSize)
+        
+        // Use CGImage cropping which works in image coordinates
+        guard let cgImage = cgImage?.cropping(to: cropRect) else {
+            return self
+        }
+        
+        return UIImage(cgImage: cgImage, scale: scale, orientation: imageOrientation)
     }
 }
 
