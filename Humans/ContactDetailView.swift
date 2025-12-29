@@ -93,14 +93,10 @@ struct ContactDetailView: View {
                         .frame(width: 80, height: 80)
                         .clipShape(Circle())
                 } else {
-                    ZStack {
-                        Circle()
-                            .fill(Color.gray.opacity(0.3))
-                            .frame(width: 80, height: 80)
-                        Text(displayContact.initials)
-                            .font(.system(size: 32, weight: .medium))
-                            .foregroundColor(.primary)
-                    }
+                    GradientInitialsAvatar(
+                        initials: displayContact.initials,
+                        size: 80
+                    )
                 }
             }
         }

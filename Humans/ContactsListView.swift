@@ -231,18 +231,15 @@ struct ContactRowView: View {
                     Image(uiImage: uiImage)
                         .resizable()
                         .aspectRatio(contentMode: .fill)
+                        .frame(width: 40, height: 40)
+                        .clipShape(Circle())
                 } else {
-                    ZStack {
-                        Circle()
-                            .fill(Color.gray.opacity(0.1))
-                        Text(contact.initials)
-                            .font(.system(size: 16, weight: .medium))
-                            .foregroundColor(Color.gray.opacity(0.5))
-                    }
+                    GradientInitialsAvatar(
+                        initials: contact.initials,
+                        size: 40
+                    )
                 }
             }
-            .frame(width: 40, height: 40)
-            .clipShape(Circle())
             
             // Name and time ago
             VStack(alignment: .leading, spacing: 4) {
