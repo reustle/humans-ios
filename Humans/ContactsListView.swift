@@ -197,7 +197,7 @@ struct ContactsListView: View {
                             .listStyle(.plain)
                             .safeAreaInset(edge: .bottom, spacing: 0) {
                                 Color.clear
-                                    .frame(height: 200)
+                                    .frame(height: 100)
                             }
                         }
                     }
@@ -249,7 +249,7 @@ struct ContactsListView: View {
                                     showAddHuman = true
                                 } label: {
                                     Image(systemName: "plus")
-                                        .font(.system(size: 24, weight: .semibold))
+                                        .font(.system(size: 24, weight: .medium))
                                         .foregroundColor(.primary)
                                         .frame(width: 56, height: 56)
                                         .conditionalGlassEffect(in: Circle())
@@ -376,12 +376,12 @@ struct ContactRowView: View {
                     Image(uiImage: uiImage)
                         .resizable()
                         .aspectRatio(contentMode: .fill)
-                        .frame(width: 40, height: 40)
+                        .frame(width: 44, height: 44)
                         .clipShape(Circle())
                 } else {
                     GradientInitialsAvatar(
                         initials: contact.initials,
-                        size: 40
+                        size: 44
                     )
                 }
             }
