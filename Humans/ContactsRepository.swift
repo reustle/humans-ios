@@ -338,6 +338,38 @@ class ContactsRepository {
         }.value
     }
     
+    /// Delete a contact's image data (removes the photo)
+    func deleteContactImage(identifier: String) async throws {
+        let status = authorizationStatus()
+        
+        guard status == .authorized else {
+            throw ContactsError.notAuthorized
+        }
+        
+        return try await Task.detached(priority: .userInitiated) { [contactStore] in
+            // Fetch the contact with minimal keys
+            let keysToFetch: [CNKeyDescriptor] = [
+                CNContactIdentifierKey as CNKeyDescriptor,
+                CNContactImageDataKey as CNKeyDescriptor,
+                CNContactThumbnailImageDataKey as CNKeyDescriptor
+            ]
+            
+            let cnContact = try contactStore.unifiedContact(withIdentifier: identifier, keysToFetch: keysToFetch)
+            
+            // Create mutable copy
+            let mutableContact = cnContact.mutableCopy() as! CNMutableContact
+            
+            // Set image data to nil to remove the photo
+            mutableContact.imageData = nil
+            
+            // Save the updated contact
+            let saveRequest = CNSaveRequest()
+            saveRequest.update(mutableContact)
+            
+            try contactStore.execute(saveRequest)
+        }.value
+    }
+    
 }
 
 enum ContactsError: LocalizedError {

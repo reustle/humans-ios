@@ -20,6 +20,8 @@ struct ContactDetailView: View {
     @State private var imageSheetMode: ImageSheetMode = .picker
     @State private var selectedImageForCrop: UIImage?
     @State private var editingNoteTimestamp: String? = nil // Timestamp of the note being edited
+    @State private var showDeleteImageConfirmation = false
+    @State private var isDeletingImage = false
     
     enum ImageSheetMode {
         case picker
@@ -54,6 +56,16 @@ struct ContactDetailView: View {
                 }
             }
             )
+        }
+        .alert("Delete Photo", isPresented: $showDeleteImageConfirmation) {
+            Button("Cancel", role: .cancel) { }
+            Button("Delete", role: .destructive) {
+                Task {
+                    await deleteImage()
+                }
+            }
+        } message: {
+            Text("Are you sure you want to delete their photo?")
         }
     }
     
@@ -93,6 +105,15 @@ struct ContactDetailView: View {
             }
         }
         .buttonStyle(PlainButtonStyle())
+        .contextMenu {
+            if displayContact.thumbnailImageData != nil {
+                Button(role: .destructive, action: {
+                    showDeleteImageConfirmation = true
+                }) {
+                    Label("Delete Photo", systemImage: "trash")
+                }
+            }
+        }
     }
     
     private var nameView: some View {
@@ -708,6 +729,24 @@ struct ContactDetailView: View {
             await loadContactWithNotes()
         } catch {
             print("Error saving contact image: \(error)")
+        }
+    }
+    
+    /// Deletes the contact's photo
+    private func deleteImage() async {
+        guard !isDeletingImage else { return }
+        
+        isDeletingImage = true
+        defer { isDeletingImage = false }
+        
+        do {
+            let repository = ContactsRepository()
+            try await repository.deleteContactImage(identifier: contact.id)
+            
+            // Reload the contact to show the updated state (no photo)
+            await loadContactWithNotes()
+        } catch {
+            print("Error deleting contact image: \(error)")
         }
     }
 }
