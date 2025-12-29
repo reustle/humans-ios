@@ -282,6 +282,7 @@ struct ContactsListView: View {
                         showWelcomeAlert = true
                     } label: {
                         Image("HumanIcon")
+                            .renderingMode(.original)
                             .resizable()
                             .aspectRatio(contentMode: .fit)
                             .frame(width: 20, height: 20)
