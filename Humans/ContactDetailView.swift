@@ -22,6 +22,7 @@ struct ContactDetailView: View {
     @State private var editingNoteTimestamp: String? = nil // Timestamp of the note being edited
     @State private var showDeleteImageConfirmation = false
     @State private var isDeletingImage = false
+    @State private var listNames: [String] = []
     
     enum ImageSheetMode {
         case picker
@@ -37,6 +38,7 @@ struct ContactDetailView: View {
             VStack(alignment: .leading, spacing: 24) {
                 headerView
                 actionButtonsView
+                listsSectionView
                 notesSectionView
             }
             .padding(.bottom)
@@ -44,6 +46,7 @@ struct ContactDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task {
             await loadContactWithNotes()
+            await loadListNames()
         }
         .sheet(isPresented: $showImageSheet) {
             ImagePickerFlow(
@@ -166,6 +169,31 @@ struct ContactDetailView: View {
         }
     }
     
+    private var listsSectionView: some View {
+        Group {
+            if !listNames.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Circles")
+                        .font(.headline)
+                        .foregroundColor(.secondary)
+                    
+                    HStack(spacing: 8) {
+                        ForEach(listNames, id: \.self) { listName in
+                            Text(listName)
+                                .font(.subheadline)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .background(Color.blue.opacity(0.1))
+                                .foregroundColor(.blue)
+                                .cornerRadius(8)
+                        }
+                    }
+                }
+                .padding(.horizontal)
+            }
+        }
+    }
+    
     private var notesSectionView: some View {
         VStack(alignment: .leading, spacing: 12) {
             newNoteView
@@ -245,6 +273,19 @@ struct ContactDetailView: View {
         } catch {
             print("Error fetching contact with notes: \(error)")
             // Silently fail - use original contact without notes
+        }
+    }
+    
+    private func loadListNames() async {
+        let repository = ContactsRepository()
+        do {
+            let names = try await repository.fetchGroupsForContact(identifier: contact.id)
+            await MainActor.run {
+                self.listNames = names
+            }
+        } catch {
+            print("Error fetching list names: \(error)")
+            // Silently fail - no lists will be shown
         }
     }
     

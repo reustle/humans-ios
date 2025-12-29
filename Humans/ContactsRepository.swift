@@ -370,6 +370,43 @@ class ContactsRepository {
         }.value
     }
     
+    /// Fetch all groups (lists) that a contact belongs to
+    func fetchGroupsForContact(identifier: String) async throws -> [String] {
+        let status = authorizationStatus()
+        
+        guard status == .authorized else {
+            throw ContactsError.notAuthorized
+        }
+        
+        return try await Task.detached(priority: .userInitiated) { [contactStore] in
+            // Fetch the contact to get its identifier
+            let keysToFetch: [CNKeyDescriptor] = [
+                CNContactIdentifierKey as CNKeyDescriptor
+            ]
+            
+            let cnContact = try contactStore.unifiedContact(withIdentifier: identifier, keysToFetch: keysToFetch)
+            
+            // Fetch all groups
+            let groups = try contactStore.groups(matching: nil)
+            
+            // Find groups that contain this contact
+            var groupNames: [String] = []
+            for group in groups {
+                // Check if this contact is in the group
+                let predicate = CNContact.predicateForContactsInGroup(withIdentifier: group.identifier)
+                let contactsInGroup = try contactStore.unifiedContacts(matching: predicate, keysToFetch: [CNContactIdentifierKey as CNKeyDescriptor])
+                
+                if contactsInGroup.contains(where: { $0.identifier == cnContact.identifier }) {
+                    if !group.name.isEmpty {
+                        groupNames.append(group.name)
+                    }
+                }
+            }
+            
+            return groupNames.sorted()
+        }.value
+    }
+    
 }
 
 enum ContactsError: LocalizedError {
