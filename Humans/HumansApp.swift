@@ -18,7 +18,7 @@ struct HumansApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContactsListView()
+            ContentView()
                 .environment(\.managedObjectContext, persistenceController.container.viewContext)
         }
     }
