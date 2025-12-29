@@ -57,25 +57,25 @@ struct Contact: Identifiable {
         return nil
     }
     
-    /// Formats modification date to "time ago" format (e.g., "2d ago", "4hr ago", "5m ago")
+    /// Formats modification date to "time ago" format (e.g., "2d ago", "4hr ago", "5m ago", "3mo ago", "1yr ago")
     var timeAgoString: String? {
         guard let modificationDate = modificationDate else {
             return nil
         }
         
         let now = Date()
-        let timeInterval = now.timeIntervalSince(modificationDate)
+        let calendar = Calendar.current
+        let components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: modificationDate, to: now)
         
-        let seconds = Int(timeInterval)
-        let minutes = seconds / 60
-        let hours = minutes / 60
-        let days = hours / 24
-        
-        if days > 0 {
+        if let years = components.year, years > 0 {
+            return "\(years)yr ago"
+        } else if let months = components.month, months > 0 {
+            return "\(months)mo ago"
+        } else if let days = components.day, days > 0 {
             return "\(days)d ago"
-        } else if hours > 0 {
+        } else if let hours = components.hour, hours > 0 {
             return "\(hours)hr ago"
-        } else if minutes > 0 {
+        } else if let minutes = components.minute, minutes > 0 {
             return "\(minutes)m ago"
         } else {
             return "just now"
