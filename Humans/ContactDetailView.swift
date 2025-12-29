@@ -41,7 +41,6 @@ struct ContactDetailView: View {
             }
             .padding(.bottom)
         }
-        .navigationTitle(displayContact.displayName)
         .navigationBarTitleDisplayMode(.inline)
         .task {
             await loadContactWithNotes()
