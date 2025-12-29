@@ -155,7 +155,7 @@ struct SearchView: View {
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    List(filteredContacts) { contact in
+                    List(Array(filteredContacts.enumerated()), id: \.element.id) { index, contact in
                         VStack(spacing: 0) {
                             NavigationLink {
                                 ContactDetailView(contact: contact)
@@ -163,7 +163,9 @@ struct SearchView: View {
                                 ContactRowView(contact: contact)
                             }
                             
-                            Divider()
+                            if index < filteredContacts.count - 1 {
+                                Divider()
+                            }
                         }
                         .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
                         .listRowSeparator(.hidden)
