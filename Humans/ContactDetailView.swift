@@ -7,7 +7,6 @@
 
 import SwiftUI
 import UIKit
-import PhotosUI
 
 // MARK: - Contact Detail View
 struct ContactDetailView: View {
@@ -16,10 +15,16 @@ struct ContactDetailView: View {
     @State private var isLoadingNotes = false
     @State private var newCommentText = ""
     @State private var isSavingNote = false
-    @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var isSavingImage = false
-    @State private var showPhotoPicker = false
+    @State private var showImageSheet = false
+    @State private var imageSheetMode: ImageSheetMode = .picker
+    @State private var selectedImageForCrop: UIImage?
     @State private var editingNoteTimestamp: String? = nil // Timestamp of the note being edited
+    
+    enum ImageSheetMode {
+        case picker
+        case crop
+    }
     
     private var displayContact: Contact {
         contactWithNotes ?? contact
@@ -39,12 +44,16 @@ struct ContactDetailView: View {
         .task {
             await loadContactWithNotes()
         }
-        .onChange(of: selectedPhotoItem) { oldValue, newValue in
+        .sheet(isPresented: $showImageSheet) {
+            ImagePickerFlow(
+                mode: $imageSheetMode,
+                selectedImage: $selectedImageForCrop,
+                onImageSelected: { image in
             Task {
-                if let newValue = newValue {
-                    await loadAndSaveImage(from: newValue)
+                        await saveImage(image)
                 }
             }
+            )
         }
     }
     
@@ -60,7 +69,8 @@ struct ContactDetailView: View {
     
     private var avatarView: some View {
         Button(action: {
-            showPhotoPicker = true
+            imageSheetMode = .picker
+            showImageSheet = true
         }) {
             Group {
                 if let imageData = displayContact.thumbnailImageData,
@@ -83,11 +93,6 @@ struct ContactDetailView: View {
             }
         }
         .buttonStyle(PlainButtonStyle())
-        .photosPicker(
-            isPresented: $showPhotoPicker,
-            selection: $selectedPhotoItem,
-            matching: .images
-        )
     }
     
     private var nameView: some View {
@@ -147,10 +152,6 @@ struct ContactDetailView: View {
     
     private var notesSectionView: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Notes")
-                .font(.headline)
-                .foregroundColor(.secondary)
-            
             newNoteView
             
             if !displayContact.note.isEmpty {
@@ -162,14 +163,20 @@ struct ContactDetailView: View {
     
     private var newNoteView: some View {
         VStack(alignment: .leading, spacing: 8) {
-            TextField(editingNoteTimestamp != nil ? "Edit note" : "New note", text: $newCommentText, axis: .vertical)
-                .lineLimit(3...10)
-                .padding(12)
-                .font(.body)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+            ZStack(alignment: .topLeading) {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+                    .frame(minHeight: 80)
+                
+                RichTextEditorWithToolbar(
+                    markdownText: $newCommentText,
+                    placeholder: editingNoteTimestamp != nil ? "Edit note" : "New note",
+                    onTextChange: nil
                 )
+                .frame(minHeight: 80)
+                .padding(.horizontal, 4)
+                .padding(.vertical, 4)
+            }
             
             if !newCommentText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 HStack(spacing: 12) {
@@ -680,25 +687,16 @@ struct ContactDetailView: View {
         return segments
     }
     
-    /// Loads an image from a PhotosPickerItem, crops it to center square, and saves it
-    private func loadAndSaveImage(from item: PhotosPickerItem) async {
+    /// Saves the cropped image from UIImagePickerController
+    private func saveImage(_ image: UIImage) async {
         guard !isSavingImage else { return }
         
         isSavingImage = true
         defer { isSavingImage = false }
         
         do {
-            // Load image data
-            guard let data = try await item.loadTransferable(type: Data.self),
-                  let image = UIImage(data: data) else {
-                return
-            }
-            
-            // Crop to center square
-            let croppedImage = image.croppedToCenterSquare()
-            
             // Convert to JPEG
-            guard let imageData = croppedImage.jpegData(compressionQuality: 0.8) else {
+            guard let imageData = image.jpegData(compressionQuality: 0.8) else {
                 return
             }
             
@@ -709,27 +707,404 @@ struct ContactDetailView: View {
             // Reload the contact to show the updated image
             await loadContactWithNotes()
         } catch {
-            print("Error loading/saving contact image: \(error)")
+            print("Error saving contact image: \(error)")
         }
     }
 }
 
-// MARK: - UIImage Extension
-extension UIImage {
-    /// Crops the image to a square from the center
-    func croppedToCenterSquare() -> UIImage {
-        let imageSize = size
-        let squareSize = min(imageSize.width, imageSize.height)
-        let x = (imageSize.width - squareSize) / 2
-        let y = (imageSize.height - squareSize) / 2
-        let cropRect = CGRect(x: x, y: y, width: squareSize, height: squareSize)
+// MARK: - Image Picker Flow
+struct ImagePickerFlow: View {
+    @Binding var mode: ContactDetailView.ImageSheetMode
+    @Binding var selectedImage: UIImage?
+    let onImageSelected: (UIImage) -> Void
+    @Environment(\.dismiss) private var dismiss
+    
+    var body: some View {
+        Group {
+            if mode == .picker {
+                ImagePickerContainer(
+                    onImagePicked: { image in
+                        selectedImage = image
+                        mode = .crop
+                    },
+                    onCancel: {
+                        dismiss()
+                        mode = .picker
+                        selectedImage = nil
+                    }
+                )
+            } else if mode == .crop, let image = selectedImage {
+                CircularImageCropView(image: image) { croppedImage in
+                    onImageSelected(croppedImage)
+                    dismiss()
+                    mode = .picker
+                    selectedImage = nil
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Image Picker Container
+struct ImagePickerContainer: UIViewControllerRepresentable {
+    let onImagePicked: (UIImage) -> Void
+    let onCancel: () -> Void
+    
+    func makeUIViewController(context: Context) -> UIViewController {
+        let container = UIViewController()
+        let picker = UIImagePickerController()
+        picker.delegate = context.coordinator
+        picker.allowsEditing = false
+        picker.sourceType = .photoLibrary
         
-        // Use CGImage cropping which works in image coordinates
-        guard let cgImage = cgImage?.cropping(to: cropRect) else {
-            return self
+        // Embed picker as a child view controller (not modally presented)
+        container.addChild(picker)
+        container.view.addSubview(picker.view)
+        picker.view.frame = container.view.bounds
+        picker.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        picker.didMove(toParent: container)
+        
+        return container
+    }
+    
+    func updateUIViewController(_ uiViewController: UIViewController, context: Context) {
+        // No updates needed
+    }
+    
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onImagePicked: onImagePicked, onCancel: onCancel)
+    }
+    
+    class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+        let onImagePicked: (UIImage) -> Void
+        let onCancel: () -> Void
+        
+        init(onImagePicked: @escaping (UIImage) -> Void, onCancel: @escaping () -> Void) {
+            self.onImagePicked = onImagePicked
+            self.onCancel = onCancel
         }
         
-        return UIImage(cgImage: cgImage, scale: scale, orientation: imageOrientation)
+        func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey : Any]) {
+            // Don't dismiss - let the parent handle the view transition
+            // The mode change will switch from picker to crop view
+            if let editedImage = info[.editedImage] as? UIImage {
+                self.onImagePicked(editedImage)
+            } else if let originalImage = info[.originalImage] as? UIImage {
+                self.onImagePicked(originalImage)
+            }
+        }
+        
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+            self.onCancel()
+        }
+    }
+}
+
+// MARK: - Image Picker Wrapper
+struct ImagePickerWrapper: UIViewControllerRepresentable {
+    let allowsEditing: Bool
+    let onImagePicked: (UIImage) -> Void
+    let onCancel: () -> Void
+    
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.delegate = context.coordinator
+        picker.allowsEditing = allowsEditing
+        picker.sourceType = .photoLibrary
+        return picker
+    }
+    
+    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {
+        // No updates needed
+    }
+    
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onImagePicked: onImagePicked, onCancel: onCancel)
+    }
+    
+    class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+        let onImagePicked: (UIImage) -> Void
+        let onCancel: () -> Void
+        
+        init(onImagePicked: @escaping (UIImage) -> Void, onCancel: @escaping () -> Void) {
+            self.onImagePicked = onImagePicked
+            self.onCancel = onCancel
+        }
+        
+        func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey : Any]) {
+            // Use editedImage when allowsEditing is true, otherwise use originalImage
+            var pickedImage: UIImage?
+            if let editedImage = info[.editedImage] as? UIImage {
+                pickedImage = editedImage
+            } else if let originalImage = info[.originalImage] as? UIImage {
+                pickedImage = originalImage
+            }
+            
+            if let image = pickedImage {
+                // Call the callback immediately, don't dismiss the picker
+                // The parent view will handle hiding it
+                self.onImagePicked(image)
+            } else {
+                // Only dismiss if no image was picked
+                picker.dismiss(animated: true)
+            }
+        }
+        
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+            picker.dismiss(animated: true) {
+                self.onCancel()
+            }
+        }
+    }
+}
+
+// MARK: - Circular Image Crop View
+struct CircularImageCropView: View {
+    let image: UIImage
+    let onCropComplete: (UIImage) -> Void
+    @Environment(\.dismiss) private var dismiss
+    
+    @State private var scale: CGFloat = 1.0
+    @State private var lastScale: CGFloat = 1.0
+    @State private var offset: CGSize = .zero
+    @State private var lastOffset: CGSize = .zero
+    @State private var currentContainerSize: CGSize = .zero
+    
+    private let cropSize: CGFloat = 300 // Size of the circular crop area
+    
+    var body: some View {
+        NavigationView {
+            ZStack {
+                Color.black.ignoresSafeArea()
+                
+                GeometryReader { geometry in
+                    let imageViewSize = geometry.size
+                    let minScale = calculateMinScale(imageSize: image.size, containerSize: imageViewSize)
+                    
+                    ZStack {
+                        // Image with transform
+                        Image(uiImage: image)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .scaleEffect(scale)
+                            .offset(offset)
+                            .frame(width: imageViewSize.width, height: imageViewSize.height)
+                            .clipped()
+                            .allowsHitTesting(false)
+                            .zIndex(0)
+                        
+                        // Circular overlay mask - dark overlay with clear circle cutout
+                        ZStack {
+                            // Dark overlay covering everything
+                            Rectangle()
+                                .fill(Color.black.opacity(0.5))
+                            
+                            // Circle that cuts out the overlay using destinationOut blend mode
+                            Circle()
+                                .fill(Color.white)
+                                .frame(width: cropSize, height: cropSize)
+                                .blendMode(.destinationOut)
+                        }
+                        .compositingGroup()
+                        .allowsHitTesting(false)
+                        .zIndex(1)
+                        
+                        // Circular border on top
+                        Circle()
+                            .stroke(Color.white, lineWidth: 2)
+                            .frame(width: cropSize, height: cropSize)
+                            .allowsHitTesting(false)
+                            .zIndex(2)
+                        
+                        // Transparent overlay that captures all gestures
+                        Rectangle()
+                            .fill(Color.clear)
+                            .contentShape(Rectangle())
+                            .gesture(
+                                SimultaneousGesture(
+                                    // Pinch to zoom
+                                    MagnificationGesture()
+                                        .onChanged { value in
+                                            let minScale = calculateMinScale(imageSize: image.size, containerSize: currentContainerSize)
+                                            let delta = value / lastScale
+                                            lastScale = value
+                                            let newScale = scale * delta
+                                            scale = max(minScale, min(newScale, 4.0))
+                                            // Constrain offset in real-time during zoom
+                                            constrainOffset(imageSize: image.size, containerSize: currentContainerSize)
+                                        }
+                                        .onEnded { _ in
+                                            lastScale = 1.0
+                                            // Constrain offset after scaling
+                                            constrainOffset(imageSize: image.size, containerSize: currentContainerSize)
+                                            lastOffset = offset
+                                        },
+                                    // Drag to pan
+                                    DragGesture(minimumDistance: 0)
+                                        .onChanged { value in
+                                            // Calculate new offset from lastOffset (the offset when drag started) plus translation
+                                            // translation is cumulative from the start of the gesture
+                                            offset = CGSize(
+                                                width: lastOffset.width + value.translation.width,
+                                                height: lastOffset.height + value.translation.height
+                                            )
+                                            // Constrain in real-time during drag
+                                            constrainOffset(imageSize: image.size, containerSize: currentContainerSize)
+                                        }
+                                        .onEnded { _ in
+                                            // Final constraint and update lastOffset for next drag
+                                            constrainOffset(imageSize: image.size, containerSize: currentContainerSize)
+                                            lastOffset = offset
+                                        }
+                                )
+                            )
+                            .zIndex(3)
+                    }
+                    .frame(width: imageViewSize.width, height: imageViewSize.height)
+                    .onAppear {
+                        // Initialize scale to fit the crop circle
+                        scale = minScale
+                        lastScale = 1.0
+                        currentContainerSize = imageViewSize
+                        // Constrain initial offset to ensure crop circle is filled
+                        constrainOffset(imageSize: image.size, containerSize: imageViewSize)
+                        lastOffset = offset
+                    }
+                    .onChange(of: imageViewSize) { oldValue, newValue in
+                        currentContainerSize = newValue
+                    }
+                }
+            }
+            .navigationTitle("Move and Scale")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Choose") {
+                        let croppedImage = cropImageToSquare(containerSize: currentContainerSize)
+                        onCropComplete(croppedImage)
+                        dismiss()
+                    }
+                }
+            }
+        }
+    }
+    
+    private func calculateMinScale(imageSize: CGSize, containerSize: CGSize) -> CGFloat {
+        // Calculate displayed image size (with aspect ratio fit)
+        let imageAspect = imageSize.width / imageSize.height
+        let containerAspect = containerSize.width / containerSize.height
+        
+        let displayedSize: CGSize
+        if imageAspect > containerAspect {
+            displayedSize = CGSize(width: containerSize.width, height: containerSize.width / imageAspect)
+        } else {
+            displayedSize = CGSize(width: containerSize.height * imageAspect, height: containerSize.height)
+        }
+        
+        // Calculate scale needed to fill the crop circle
+        // The crop circle is centered, so we need the displayed size * scale to be at least cropSize
+        let scaleToFillWidth = cropSize / displayedSize.width
+        let scaleToFillHeight = cropSize / displayedSize.height
+        
+        // Use the larger scale to ensure the crop circle is completely filled
+        return max(scaleToFillWidth, scaleToFillHeight)
+    }
+    
+    private func constrainOffset(imageSize: CGSize, containerSize: CGSize) {
+        // Calculate displayed image size (with aspect ratio fit) - same logic as cropImageToSquare
+        let imageAspect = imageSize.width / imageSize.height
+        let containerAspect = containerSize.width / containerSize.height
+        
+        let displayedSize: CGSize
+        if imageAspect > containerAspect {
+            displayedSize = CGSize(width: containerSize.width, height: containerSize.width / imageAspect)
+        } else {
+            displayedSize = CGSize(width: containerSize.height * imageAspect, height: containerSize.height)
+        }
+        
+        // Apply scale to get the actual displayed size
+        let scaledDisplayedWidth = displayedSize.width * scale
+        let scaledDisplayedHeight = displayedSize.height * scale
+        
+        // Calculate the maximum allowed offset to keep crop circle within image bounds
+        // The crop circle is centered, and we need to ensure it never goes outside the image
+        // Image is centered at (containerSize.width/2, containerSize.height/2) with offset applied
+        // Crop circle is also centered at (containerSize.width/2, containerSize.height/2)
+        
+        // For the crop circle to stay within the image:
+        // cropLeft >= imageLeft  =>  centerX - cropSize/2 >= centerX - scaledWidth/2 + offset.width
+        // => offset.width <= (scaledWidth - cropSize)/2
+        // cropRight <= imageRight  =>  centerX + cropSize/2 <= centerX + scaledWidth/2 + offset.width
+        // => offset.width >= -(scaledWidth - cropSize)/2
+        
+        let maxOffsetX = (scaledDisplayedWidth - cropSize) / 2
+        let maxOffsetY = (scaledDisplayedHeight - cropSize) / 2
+        
+        // Clamp offset to valid range
+        offset.width = max(-maxOffsetX, min(maxOffsetX, offset.width))
+        offset.height = max(-maxOffsetY, min(maxOffsetY, offset.height))
+    }
+    
+    private func cropImageToSquare(containerSize: CGSize) -> UIImage {
+        let imageSize = image.size
+        
+        // Calculate displayed image size (with aspect ratio fit)
+        let imageAspect = imageSize.width / imageSize.height
+        let containerAspect = containerSize.width / containerSize.height
+        
+        let displayedSize: CGSize
+        if imageAspect > containerAspect {
+            displayedSize = CGSize(width: containerSize.width, height: containerSize.width / imageAspect)
+        } else {
+            displayedSize = CGSize(width: containerSize.height * imageAspect, height: containerSize.height)
+        }
+        
+        // Apply scale to displayed size
+        let scaledDisplayedWidth = displayedSize.width * scale
+        let scaledDisplayedHeight = displayedSize.height * scale
+        
+        // Calculate the crop circle center in container coordinates
+        let cropCenterX = containerSize.width / 2
+        let cropCenterY = containerSize.height / 2
+        
+        // Calculate where the displayed image is positioned (centered)
+        let imageDisplayOffsetX = (containerSize.width - scaledDisplayedWidth) / 2
+        let imageDisplayOffsetY = (containerSize.height - scaledDisplayedHeight) / 2
+        
+        // Convert crop center to displayed image coordinates (accounting for offset)
+        let cropCenterInDisplayX = cropCenterX - imageDisplayOffsetX - offset.width
+        let cropCenterInDisplayY = cropCenterY - imageDisplayOffsetY - offset.height
+        
+        // Convert to actual image coordinates
+        let scaleFactorX = imageSize.width / scaledDisplayedWidth
+        let scaleFactorY = imageSize.height / scaledDisplayedHeight
+        
+        let cropCenterInImageX = cropCenterInDisplayX * scaleFactorX
+        let cropCenterInImageY = cropCenterInDisplayY * scaleFactorY
+        
+        // Calculate crop size in image coordinates
+        let cropSizeInImage = cropSize * scaleFactorX
+        
+        // Calculate crop rect (ensure it's square and within bounds)
+        let halfCrop = cropSizeInImage / 2
+        let cropRect = CGRect(
+            x: max(0, min(imageSize.width - cropSizeInImage, cropCenterInImageX - halfCrop)),
+            y: max(0, min(imageSize.height - cropSizeInImage, cropCenterInImageY - halfCrop)),
+            width: min(cropSizeInImage, imageSize.width),
+            height: min(cropSizeInImage, imageSize.height)
+        )
+        
+        // Crop the image
+        guard let cgImage = image.cgImage?.cropping(to: cropRect) else {
+            return image
+        }
+        
+        return UIImage(cgImage: cgImage, scale: image.scale, orientation: image.imageOrientation)
     }
 }
 

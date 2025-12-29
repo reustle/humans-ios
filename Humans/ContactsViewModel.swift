@@ -45,7 +45,7 @@ class ContactsViewModel: ObservableObject {
         let currentStatus = repository.authorizationStatus()
         authorizationStatus = currentStatus
         
-        print("📱 Contacts authorization status: \(currentStatus.rawValue)")
+        //print("📱 Contacts authorization status: \(currentStatus.rawValue)")
         
         // If not determined, request access
         if currentStatus == .notDetermined {
@@ -85,10 +85,10 @@ class ContactsViewModel: ObservableObject {
         }
         
         // Fetch contacts
-        print("📱 Fetching contacts...")
+        //print("📱 Fetching contacts...")
         do {
             let fetchedContacts = try await repository.fetchAllContacts()
-            print("📱 Fetched \(fetchedContacts.count) contacts")
+            //print("📱 Fetched \(fetchedContacts.count) contacts")
             // Sort by modification date (most recent first), then by name for contacts without dates
             contacts = fetchedContacts.sorted { contact1, contact2 in
                 let date1 = contact1.modificationDate ?? Date.distantPast

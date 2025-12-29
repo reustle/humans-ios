@@ -11,6 +11,7 @@ import Contacts
 struct ContactsListView: View {
     @StateObject private var viewModel = ContactsViewModel()
     @State private var searchText = ""
+    @State private var showWelcomeAlert = false
     
     /// Filtered contacts based on search text
     /// - Name matches are prioritized over notes matches
@@ -193,14 +194,22 @@ struct ContactsListView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
-                    Image("HumanIcon")
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: 20, height: 20)
-                        .padding(6)
-                        .frame(width: 32, height: 32)
-                        .clipShape(Circle())
+                    Button {
+                        showWelcomeAlert = true
+                    } label: {
+                        Image("HumanIcon")
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 20, height: 20)
+                            .padding(6)
+                            .frame(width: 32, height: 32)
+                            .clipShape(Circle())
+                    }
+                    .buttonStyle(.plain)
                 }
+            }
+            .alert("Welcome to Humans", isPresented: $showWelcomeAlert) {
+                Button("OK", role: .cancel) { }
             }
             .task(id: viewModel.authorizationStatus) {
                 await viewModel.loadContacts()
