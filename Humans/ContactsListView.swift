@@ -21,6 +21,7 @@ struct ContactsListView: View {
     @State private var showAddHuman = false
     @FocusState private var isSearchFocused: Bool
     @AppStorage("sortOption") private var sortOptionRaw: String = SortOption.lastModified.rawValue
+    @State private var navigationPath = NavigationPath()
     
     private var sortOption: SortOption {
         get {
@@ -131,8 +132,8 @@ struct ContactsListView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            ZStack {
+        ZStack {
+            NavigationStack(path: $navigationPath) {
                 VStack(spacing: 0) {
                     Group {
                         if viewModel.isLoading {
@@ -185,8 +186,15 @@ struct ContactsListView: View {
                         } else {
                             List(Array(filteredContacts.enumerated()), id: \.element.id) { index, contact in
                                 VStack(spacing: 0) {
-                                    NavigationLink(value: contact.id) {
+                                    ZStack(alignment: .leading) {
+                                        // The actual row UI
                                         ContactRowView(contact: contact)
+                                        
+                                        // Hidden NavigationLink to handle navigation without showing chevron
+                                        NavigationLink(value: contact.id) {
+                                            EmptyView()
+                                        }
+                                        .opacity(0)
                                     }
                                     
                                     if index < filteredContacts.count - 1 {
@@ -204,79 +212,6 @@ struct ContactsListView: View {
                         }
                     }
                 }
-                
-                // Floating Action Buttons
-                VStack {
-                    Spacer()
-                    HStack {
-                        Spacer()
-                        if isSearchActive {
-                            // Search bar with X button when active
-                            HStack(spacing: 12) {
-                                TextField("Search humans", text: $searchText)
-                                    .focused($isSearchFocused)
-                                    .textFieldStyle(.plain)
-                                    .padding(.horizontal, 16)
-                                    .padding(.vertical, 12)
-                                    .conditionalGlassEffect(in: RoundedRectangle(cornerRadius: 28))
-                                    .frame(maxWidth: .infinity)
-                                
-                                Button {
-                                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                                        isSearchActive = false
-                                        searchText = ""
-                                        isSearchFocused = false
-                                    }
-                                } label: {
-                                    Image(systemName: "xmark")
-                                        .font(.system(size: 20, weight: .medium))
-                                        .foregroundColor(.primary)
-                                        .frame(width: 56, height: 56)
-                                        .conditionalGlassEffect(in: Circle())
-                                }
-                            }
-                            .padding(.leading, 20)
-                            .padding(.trailing, 20)
-                            .padding(.bottom, 20)
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                // Consume tap to prevent it from passing through to the list
-                                isSearchFocused = true
-                            }
-                            .transition(.move(edge: .trailing).combined(with: .opacity))
-                        } else {
-                            VStack(spacing: 16) {
-                                // Add contact button (top)
-                                Button {
-                                    showAddHuman = true
-                                } label: {
-                                    Image(systemName: "plus")
-                                        .font(.system(size: 24, weight: .medium))
-                                        .foregroundColor(.primary)
-                                        .frame(width: 56, height: 56)
-                                        .conditionalGlassEffect(in: Circle())
-                                }
-                                
-                                // Search button (bottom)
-                                Button {
-                                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                                        isSearchActive = true
-                                        isSearchFocused = true
-                                    }
-                                } label: {
-                                    Image(systemName: "magnifyingglass")
-                                        .font(.system(size: 20, weight: .medium))
-                                        .foregroundColor(.primary)
-                                        .frame(width: 56, height: 56)
-                                        .conditionalGlassEffect(in: Circle())
-                                }
-                            }
-                            .padding(.trailing, 20)
-                            .padding(.bottom, 20)
-                        }
-                    }
-                }
-            }
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
@@ -361,6 +296,83 @@ struct ContactsListView: View {
                     ContactDetailView(contact: contact)
                 }
             }
+        }
+        
+        // Floating Action Buttons - outside NavigationStack so they don't slide with content
+        VStack {
+            Spacer()
+            HStack {
+                Spacer()
+                if isSearchActive {
+                    // Search bar with X button when active
+                    HStack(spacing: 12) {
+                        TextField("Search humans", text: $searchText)
+                            .focused($isSearchFocused)
+                            .textFieldStyle(.plain)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 12)
+                            .conditionalGlassEffect(in: RoundedRectangle(cornerRadius: 28))
+                            .frame(maxWidth: .infinity)
+                        
+                        Button {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                                isSearchActive = false
+                                searchText = ""
+                                isSearchFocused = false
+                            }
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 20, weight: .medium))
+                                .foregroundColor(.primary)
+                                .frame(width: 56, height: 56)
+                                .conditionalGlassEffect(in: Circle())
+                        }
+                    }
+                    .padding(.leading, 20)
+                    .padding(.trailing, 20)
+                    .padding(.bottom, 20)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        // Consume tap to prevent it from passing through to the list
+                        isSearchFocused = true
+                    }
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+                    .opacity(navigationPath.isEmpty ? 1 : 0)
+                } else {
+                    VStack(spacing: 16) {
+                        // Add contact button (top)
+                        Button {
+                            showAddHuman = true
+                        } label: {
+                            Image(systemName: "plus")
+                                .font(.system(size: 24, weight: .medium))
+                                .foregroundColor(.primary)
+                                .frame(width: 56, height: 56)
+                                .conditionalGlassEffect(in: Circle())
+                        }
+                        
+                        // Search button (bottom)
+                        Button {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                                isSearchActive = true
+                                isSearchFocused = true
+                            }
+                        } label: {
+                            Image(systemName: "magnifyingglass")
+                                .font(.system(size: 20, weight: .medium))
+                                .foregroundColor(.primary)
+                                .frame(width: 56, height: 56)
+                                .conditionalGlassEffect(in: Circle())
+                        }
+                    }
+                    .padding(.trailing, 20)
+                    .padding(.bottom, 20)
+                    .opacity(navigationPath.isEmpty ? 1 : 0)
+                }
+            }
+        }
+        .allowsHitTesting(navigationPath.isEmpty)
+        .animation(.easeInOut(duration: 0.35), value: navigationPath.count)
         }
     }
 }
