@@ -1,0 +1,1 @@
+Never attempt to build or call xcode related terminal commands yourself.

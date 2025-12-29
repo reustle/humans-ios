@@ -991,6 +991,8 @@ struct CircularImageCropView: View {
                     }
                 }
             }
+            .toolbarBackground(.visible, for: .navigationBar)
+            .toolbarColorScheme(.dark, for: .navigationBar)
         }
     }
     
